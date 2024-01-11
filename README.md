@@ -73,17 +73,19 @@ The `update_google_sheet.py` script opens a Google Sheet worksheet, clears the d
 - Credentials for editing the Google Sheet are stored in a separate JSON file
 
 ```console
-usage: update_google_sheet.py [-h] [-w WORKSHEET] [-f FILE] [-c CREDENTIALS]
+usage: update_google_sheet.py [-h] [-w WORKSHEET] [-f FILE] [-c CREDENTIALS] [-s SHEET]
 
 Update operator performance data CSV on Google Sheet
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   -w WORKSHEET, --worksheet WORKSHEET
                         The name of the worksheet to update with data from the CSV
   -f FILE, --file FILE  The CSV data file to use (default: operators.csv)
   -c CREDENTIALS, --credentials CREDENTIALS
                         The credentials JSON file used to access the Google Sheet
+  -s SHEET, --sheet SHEET
+                        The name of the Google Sheet to update
 ```
 
 ## Example
@@ -91,7 +93,7 @@ optional arguments:
 Example that updates the worksheet "Mainnet 24h" with data from a CSV file:
 
 ```console
-python3 update_google_sheet.py -f data/ssv_operator_performance-mainnet-24h.csv -w "Mainnet 24h" -c credentials.json
+python3 update_google_sheet.py -f data/ssv_operator_performance-mainnet-24h.csv -w "Mainnet 24h" -c credentials.json -s "ssv_performance_data"
 ```
 
 ## Example Cron Job
@@ -108,7 +110,7 @@ Add a `update_google_sheet.py` job for each CSV you would like uploaded to a Goo
 This example runs the script each morning at 12:28am.
 
 ```
-28 00 * * * /usr/bin/python3 /home/metanull/vo_performance/update_google_sheet.py -c /home/metanull/vo_performance/credentials.json -f /home/metanull/vo_performance/data/ssv_operator_performance-mainnet-24h.csv -w "Mainnet 24h"
+28 00 * * * /usr/bin/python3 /home/metanull/vo_performance/update_google_sheet.py -c /home/metanull/vo_performance/credentials.json -f /home/metanull/vo_performance/data/ssv_operator_performance-mainnet-24h.csv -w "Mainnet 24h" -s "ssv_performance_data"
 ```
 
 Save your crontab and exit the editor. Your worksheet should be updated daily.
