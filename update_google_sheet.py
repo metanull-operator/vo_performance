@@ -11,14 +11,14 @@ parser.add_argument('-f', '--file', type=str, default='operators.csv',
                     help='The CSV data file to use (default: operators.csv)')
 parser.add_argument('-c', '--credentials', type=str, default='credentials.json',
                     help='The credentials JSON file used to access the Google Sheet')
+parser.add_argument('-s', '--sheet', type=str,
+                    help='The name of the Google Sheet to update')
 args = parser.parse_args()
 
 csv_file_path = args.file
 worksheet_name = args.worksheet
+sheet_name = args.sheet
 credentials_file = args.credentials
-
-# Define the name of the Google Sheet you want to overwrite
-sheet_name = 'ssv_performance_data'
 
 # Authenticate with Google Sheets API using your credentials
 scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
