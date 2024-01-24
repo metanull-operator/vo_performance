@@ -47,7 +47,7 @@ def update_dynamodb(operator_id, name, validator_count, performance, table_name)
         ExpressionAttributeNames={
             "#n": "Name",
             "#vc": "ValidatorCount",
-            "#p24": "Performance24h",  # Change the attribute name here
+            "#p24": "Performance24h",
             "#dk": date_key
         },
         ExpressionAttributeValues={
@@ -62,7 +62,7 @@ def update_dynamodb(operator_id, name, validator_count, performance, table_name)
 
 def lambda_handler(event, context):
     api_url = "https://api.ssv.network/api/v4/mainnet/operators/?page=1&perPage=1000&validatorsCount=true"
-    time_period = '24h'  # Fixed time period for demonstration
+    time_period = '24h'
 
     performance_data, name_data, validator_count_data = fetch_and_filter_data(api_url, time_period)
     table_name = 'SSVPerformanceData'
