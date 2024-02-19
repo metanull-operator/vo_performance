@@ -21,7 +21,6 @@ def fetch_and_filter_data(url, time_period):
     # Filter operators for IDs 1 through 300 and validator_count >= 1
     filtered_operators = [op for op in data["operators"] if 1 <= op["id"] <= 300 and op.get("validators_count", 0) >= 1]
 
-    # Adjust here: Divide the performance data by 100 to convert it into a decimal format
     performance_data = {op["id"]: Decimal(str(op["performance"][time_period] / 100)) for op in filtered_operators}
     name_data = {op["id"]: op.get("name", '') for op in filtered_operators}
     validator_count_data = {op["id"]: op.get("validators_count", '') for op in filtered_operators}
@@ -36,7 +35,7 @@ def update_performance_data(operator_id, performance, table_name):
         Key={'OperatorID': operator_id},
         UpdateExpression="SET #dk = :performance",
         ExpressionAttributeNames={"#dk": date_key},
-        ExpressionAttributeValues={":performance": performance},  # Performance already adjusted
+        ExpressionAttributeValues={":performance": performance},
         ReturnValues="UPDATED_NEW"
     )
     return response
@@ -59,18 +58,16 @@ def lambda_handler(event, context):
 
     performance_data, name_data, validator_count_data = fetch_and_filter_data(api_url, time_period)
     
-    performance_table_name = 'ssvScanData'  # Table for performance data
-    operator_table_name = 'testSSVPerformanceData'  # Table for remaining data
+    performance_table_name = 'ssvScanData'
+    operator_table_name = 'testSSVPerformanceData'
     
     for operator_id in performance_data:
-        # Update performance data, divide by 100 for decimal format
         update_performance_response = update_performance_data(
             operator_id,
             performance_data[operator_id],
             performance_table_name
         )
         
-        # Update operator data, including "isVO" attribute
         update_operator_response = update_operator_data(
             operator_id,
             name_data[operator_id],
