@@ -27,7 +27,6 @@ def fetch_and_filter_data(url, time_period):
 
     return performance_data, name_data, validator_count_data
 
-
 def update_dynamodb(operator_id, name, validator_count, performance, table_name):
     table = dynamodb.Table(table_name)
     date_key = datetime.now().strftime("%Y-%m-%d")
@@ -58,7 +57,6 @@ def update_dynamodb(operator_id, name, validator_count, performance, table_name)
         ReturnValues="UPDATED_NEW"
     )
     return response
-
 
 def lambda_handler(event, context):
     api_url = "https://api.ssv.network/api/v4/mainnet/operators/?page=1&perPage=1000&validatorsCount=true"
