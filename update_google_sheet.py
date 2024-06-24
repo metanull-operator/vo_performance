@@ -1,65 +1,91 @@
 import argparse
+import logging
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from gspread_formatting import *
-from openpyxl.utils import get_column_letter  # Import the get_column_letter function
+from storage.storage_factory import StorageFactory
+from common.config import *
 
-parser = argparse.ArgumentParser(description='Update operator performance data CSV on Google Sheet')
-parser.add_argument('-w', '--worksheet', type=str,
-                    help='The name of the worksheet to update with data from the CSV')
-parser.add_argument('-f', '--file', type=str, default='operators.csv',
-                    help='The CSV data file to use (default: operators.csv)')
-parser.add_argument('-c', '--credentials', type=str, default='credentials.json',
-                    help='The credentials JSON file used to access the Google Sheet')
-parser.add_argument('-s', '--sheet', type=str,
-                    help='The name of the Google Sheet to update')
-args = parser.parse_args()
 
-csv_file_path = args.file
-worksheet_name = args.worksheet
-sheet_name = args.sheet
-credentials_file = args.credentials
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Authenticate with Google Sheets API using your credentials
-scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-credentials = ServiceAccountCredentials.from_json_keyfile_name(credentials_file, scope)
-gc = gspread.authorize(credentials)
 
-# Open the Google Sheet by name
-worksheet = gc.open(sheet_name).worksheet(worksheet_name)
+# Creates a two-dimensional representation of the data to be populated into the Google Sheet
+def create_spreadsheet_data(data, performance_data_attribute):
+    dates = sorted({date for details in data.values() for date in details[performance_data_attribute]}, reverse=True)
+    sorted_entries = sorted(data.items(), key=lambda item: item[1].get(FIELD_OPERATOR_ID, 'Unknown'))
 
-# Clear the existing data in the Google Sheet
-worksheet.clear()
+    spreadsheet_data = [['OperatorID', 'Name', 'isVO', 'ValidatorCount', 'Address'] + dates]
 
-# Read the contents of the CSV file
-with open(csv_file_path, 'r') as csv_file:
-    csv_contents = csv_file.read()
+    for id, details in sorted_entries:
+        row = [id, details.get(FIELD_OPERATOR_NAME, None), 1 if details.get(FIELD_IS_VO, 0) else 0,
+               details.get(FIELD_VALIDATOR_COUNT, None), details.get(FIELD_ADDRESS, None)]
+        for date in dates:
+            row.append(details[performance_data_attribute].get(date, None))
+        spreadsheet_data.append(row)
 
-# Convert the CSV contents to a list of lists
-csv_data = [line.split(',') for line in csv_contents.split('\n')]
+    return spreadsheet_data
 
-# Update the specific Google Sheet with the CSV data using named arguments and a list of lists
-worksheet.update(values=csv_data, range_name='A1', value_input_option='user_entered')
 
-# Apply formatting to the header row
-header_format = CellFormat(
-    horizontalAlignment='CENTER',  # Center-align the text
-    textFormat=TextFormat(bold=True),
-    borders={ 'bottom':{'style': 'SOLID'} }
-)
-format_cell_range(worksheet, 'A1:Z1', header_format)
+def main():
+    parser = argparse.ArgumentParser(
+        description='Retrieve SSV operator performance data from AWS Dynamo DB and update in Google Sheets')
+    parser.add_argument('-c', '--discord_credentials', type=str, required=True,
+                        help='The credentials JSON file used to access the Google Sheet')
+    parser.add_argument('-d', '--document', type=str, required=True, help='The name of the Google Sheet to update')
+    parser.add_argument('-w', '--worksheet', type=str, required=True,
+                        help='The name of the worksheet to update with data from the CSV')
+    parser.add_argument('-p', '--performance_table', type=str, required=True,
+                        help='The DynamoDB table from which performance data should be queried')
+    parser.add_argument('-a', '--attribute', type=str, required=True,
+                        help='The DynamoDB table attribute from which JSON performance data should be pulled')
 
-# Apply date formatting to header cells in the fourth column or greater
-date_format = CellFormat(
-    numberFormat=NumberFormat(type='DATE', pattern='yyyy-mm-dd')
-)
-format_cell_range(worksheet, f'D1:{get_column_letter(len(csv_data[0]))}1', date_format)
+    args = parser.parse_args()
 
-# Apply 2 decimal places formatting to cells in rows 2 or higher, in the fourth column or greater
-decimal_format = CellFormat(
-    numberFormat=NumberFormat(type='PERCENT', pattern='0.00%')
-)
-num_rows = len(csv_data)
-format_cell_range(worksheet, 'D2:{get_column_letter(len(csv_data[0]))}{num_rows}', decimal_format)
+    credentials_file = args.discord_credentials
+    document_name = args.document
+    worksheet_name = args.worksheet
+    performance_data_table = args.performance_table
+    performance_data_attribute = args.attribute
 
-print(f'CSV file "{csv_file_path}" has been successfully overwritten in Google Sheet "{sheet_name}" with formatting.')
+    try:
+        # Authenticate with Google Sheets API using provided credentials
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        credentials = ServiceAccountCredentials.from_json_keyfile_name(credentials_file, scope)
+        gc = gspread.authorize(credentials)
+        logging.info("Authenticated with Google Sheets API.")
+
+        # Open the Google Sheet document
+        worksheet = gc.open(document_name).worksheet(worksheet_name)
+        logging.info(f"Opened Google Sheet document: {document_name}, worksheet: {worksheet_name}.")
+
+    except Exception as e:
+        logging.error(f"Error during Google Sheets authentication or opening document: {e}")
+        return
+
+    try:
+        # Initialize storage and retrieve performance data
+        StorageFactory.initialize('performance', 'DynamoDB', table=performance_data_table)
+        storage = StorageFactory.get_storage('performance')
+        perf_data = storage.get_performance_all()
+        logging.info("Retrieved performance data from DynamoDB.")
+
+    except Exception as e:
+        logging.error(f"Error during DynamoDB operations: {e}")
+        return
+
+    try:
+        # Create spreadsheet data
+        spreadsheet = create_spreadsheet_data(perf_data, performance_data_attribute)
+
+        # Clear spreadsheet and update with new data
+        worksheet.clear()
+        worksheet.update(values=spreadsheet, range_name='A1', value_input_option='USER_ENTERED')
+        logging.info("Updated Google Sheet with new performance data.")
+
+    except Exception as e:
+        logging.error(f"Error during spreadsheet update: {e}")
+
+
+if __name__ == "__main__":
+    main()
