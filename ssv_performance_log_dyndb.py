@@ -31,6 +31,7 @@ def fetch_and_filter_data(base_url, time_period, page_size):
 
     return operators
 
+
 def ensure_performance_attribute(table, operator_id, attribute_name):
     try:
         response = table.get_item(Key={'OperatorID': operator_id})
@@ -45,6 +46,7 @@ def ensure_performance_attribute(table, operator_id, attribute_name):
         print(f"Failed to check/initiate {attribute_name} for OperatorID={operator_id}: {e}")
         raise
 
+
 def update_dynamodb_performance_data(table_name, operators, target_date, attribute_name, time_period, overwrite):
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(table_name)
@@ -53,18 +55,21 @@ def update_dynamodb_performance_data(table_name, operators, target_date, attribu
         performance = operator["performance"][time_period]
 
         is_vo = 1 if operator.get("type", "") == "verified_operator" else 0
+        is_private = bool(operator.get("is_private", False))
 
         update_expression = [
             'SET #name = :name',
             'ValidatorCount = :validator_count',
             'isVO = :is_vo',
-            'Address = :address'
+            'Address = :address',
+            'isPrivate = :is_private'
         ]
         expression_attribute_values = {
             ':name': operator.get("name", ""),
             ':validator_count': operator.get("validators_count", 0),
             ':is_vo': is_vo,
-            ':address': operator.get("owner_address", "")
+            ':address': operator.get("owner_address", ""),
+            ':is_private': is_private
         }
         expression_attribute_names = {
             '#name': 'Name'
@@ -99,6 +104,7 @@ def update_dynamodb_performance_data(table_name, operators, target_date, attribu
                     'ValidatorCount': operator.get("validators_count", 0),
                     'isVO': is_vo,
                     'Address': operator.get("owner_address", ""),
+                    'isPrivate': is_private,
                     attribute_name: {
                         target_date: performance
                     }
