@@ -1,8 +1,9 @@
 import json
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 from decimal import Decimal, ROUND_HALF_UP
+from botocore.exceptions import ClientError
 
 # Initialize a DynamoDB client
 dynamodb = boto3.resource('dynamodb')
@@ -13,30 +14,50 @@ class DecimalEncoder(json.JSONEncoder):
             return float(obj)
         return super(DecimalEncoder, self).default(obj)
 
-def fetch_and_filter_data(url, time_periods):
-    response = requests.get(url)
-    response.raise_for_status()
-    data = response.json()
+def fetch_and_filter_data(base_url, time_periods, page_size):
+    page = 1
+    operators = {}
 
-    filtered_operators = [
-        op for op in data["operators"]
-        if 1 <= op["id"] <= 1000 and op.get("validators_count", 0) >= 1
-    ]
+    while True:
+        url = f"{base_url}&page={page}&perPage={page_size}"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
 
-    performance_data = {
-        time_period: {
-            op["id"]: Decimal(str(op["performance"].get(time_period, 0))) / Decimal(100)
-            for op in filtered_operators
-        } for time_period in time_periods
-    }
-    name_data = {op["id"]: op.get("name", 'Unknown Name') for op in filtered_operators}
-    validator_count_data = {op["id"]: op.get("validators_count", 0) for op in filtered_operators}
-    address_data = {op["id"]: op.get("owner_address", '') for op in filtered_operators}
-    type_data = {op["id"]: 1 if op.get("type", '') == "verified_operator" else 0 for op in filtered_operators}
+        if not data["operators"]:
+            break
 
-    return performance_data, name_data, validator_count_data, address_data, type_data
+        for op in data["operators"]:
+            try:
+                if int(op["validators_count"]) > 0:
+                    for time_period in time_periods:
+                        op["performance"][time_period] = Decimal(str(op["performance"].get(time_period, 0))) / Decimal(100)
+                    operators[op["id"]] = op
+            except Exception as e:
+                print(f"Error processing operator {op['id']}: {e}")
+                continue
 
-def update_performance_data(operator_id, performance_data, name, validator_count, address, is_vo, table_name):
+        page += 1
+
+    return operators
+
+# Attempt to create a performance attribute or initialize it with an empty dict/map
+# if it isn't already present.
+def ensure_performance_attribute(table, operator_id, attribute_name):
+    try:
+        # ConditionExpression is re-checking existence prior to overwriting
+        # with empty map, in case one was recently created.
+        table.update_item(
+            Key={'OperatorID': operator_id},
+            UpdateExpression=f'SET {attribute_name} = :empty_map',
+            ExpressionAttributeValues={':empty_map': {}},
+            ConditionExpression="attribute_not_exists(attribute_name) OR NOT attribute_type(attribute_name, :type_map)"
+        )
+    except ClientError as e:
+        print(f"Failed to check/initiate {attribute_name} for OperatorID={operator_id}: {e}")
+        raise
+
+def update_performance_data(operator_id, performance_data, name, validator_count, address, is_vo, table_name, overwrite):
     table = dynamodb.Table(table_name)
     date_key = datetime.now().strftime("%Y-%m-%d")
 
@@ -60,47 +81,90 @@ def update_performance_data(operator_id, performance_data, name, validator_count
             }
         )
     else:
-        # Update the performance maps if they already exist
-        response = table.update_item(
-            Key={'OperatorID': operator_id},
-            UpdateExpression="SET Performance24h.#dk = :p24h, Performance30d.#dk = :p30d, #n = :name, #vc = :vc, #addr = :address, #vo = :isvo",
-            ExpressionAttributeNames={
-                "#dk": date_key,
-                "#n": "Name",
-                "#vc": "ValidatorCount",
-                "#addr": "Address",
-                "#vo": "isVO"
-            },
-            ExpressionAttributeValues={
-                ":p24h": format_decimal(performance_data['24h']),
-                ":p30d": format_decimal(performance_data['30d']),
-                ":name": name,
-                ":vc": validator_count,
-                ":address": address,
-                ":isvo": is_vo
-            },
-            ReturnValues="UPDATED_NEW"
-        )
-        return response
+        # If we don't see the performance attribute as a dict/map in the
+        # record we just retrieved, then make the call to initialize it.
+        # This should be a rare case, because this code correctly initializes, but
+        # legacy code may not.
+        if 'Performance24h' not in item or not isinstance(item['Performance24h'], dict):
+            ensure_performance_attribute(table_name, operator_id, 'Performance24h')
+        if 'Performance30d' not in item or not isinstance(item['Performance30d'], dict):
+            ensure_performance_attribute(table_name, operator_id, 'Performance30d')
+
+        update_expression = [
+            'SET #n = :name',
+            '#vc = :vc',
+            '#addr = :address',
+            '#vo = :isvo'
+        ]
+
+        expression_attribute_names = {
+            "#dk": date_key
+            "#n": "Name",
+            "#vc": "ValidatorCount",
+            "#addr": "Address",
+            "#vo": "isVO"
+        }
+
+        expression_attribute_values = {
+            ":name": name,
+            ":vc": validator_count,
+            ":address": address,
+            ":isvo": is_vo,
+        }
+
+        # Update the performance maps and set the values
+        if overwrite:
+            # If overwriting, set the performance data directly
+            update_expression.append('Performance24h.#dk = :p24h')
+            update_expression.append('Performance30d.#dk = :p30d')
+        else:
+            # If not overwriting, initialize the map and set the value if it doesn't exist
+            update_expression.append('Performance24h.#dk = if_not_exists(Performance24h.#dk, :p24h)')
+            update_expression.append('Performance30d.#dk = if_not_exists(Performance30d.#dk, :p30d)')
+
+        update_expression_str = ', '.join(update_expression)
+
+        try:
+            response = table.update_item(
+                Key={'OperatorID': operator_id},
+                UpdateExpression=update_expression_str,
+                ExpressionAttributeNames=expression_attribute_names,
+                ExpressionAttributeValues=expression_attribute_values,
+                ReturnValues="UPDATED_NEW"
+            )
+            return response
+        except Exception as e:
+            print(f"Error updating item: {str(e)}")
 
 def lambda_handler(event, context):
-    api_url = "https://api.ssv.network/api/v4/mainnet/operators/?page=1&perPage=1000&validatorsCount=true"
-    time_periods = ['24h', '30d']
+    time_periods = event.get('time_periods', ['24h', '30d'])
+    network = event.get('network', 'mainnet')
+    table_name = event['table']
+    page_size = event.get('page_size', 100)
+    utc = event.get('utc', False)
+    overwrite = event.get('overwrite', False)
 
-    performance_data, name_data, validator_count_data, address_data, type_data = fetch_and_filter_data(api_url, time_periods)
-    table_name = 'SSVPerformanceData'
+    base_url = f"https://api.ssv.network/api/v4/{network}/operators/?validatorsCount=true"
+    operators = fetch_and_filter_data(base_url, time_periods, page_size)
 
-    for operator_id in performance_data['24h'].keys():
-        response = update_performance_data(
+    if utc:
+        target_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    else:
+        target_date = datetime.now().strftime("%Y-%m-%d")
+
+    for operator_id, operator in operators.items():
+        performance_data = {time_period: operator["performance"][time_period] for time_period in time_periods}
+        update_response = update_performance_data(
             operator_id,
-            {'24h': performance_data['24h'][operator_id], '30d': performance_data['30d'][operator_id]},
-            name_data[operator_id],
-            validator_count_data[operator_id],
-            address_data[operator_id],
-            type_data[operator_id],
-            table_name
+            performance_data,
+            operator.get("name", 'Unknown Name'),
+            operator.get("validators_count", 0),
+            operator.get("owner_address", ''),
+            1 if operator.get("type", '') == "verified_operator" else 0,
+            table_name,
+            overwrite
         )
-        print("Updated operator:", operator_id, "Response:", json.dumps(response, indent=2, cls=DecimalEncoder))
+        print("Updated operator:", operator_id, "Response:", json.dumps(update_response, indent=2, cls=DecimalEncoder))
 
     return {
         'statusCode': 200,
