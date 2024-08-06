@@ -57,7 +57,7 @@ def ensure_performance_attribute(table, operator_id, attribute_name):
         print(f"Failed to check/initiate {attribute_name} for OperatorID={operator_id}: {e}")
         raise
 
-def update_performance_data(operator_id, performance_data, name, validator_count, address, is_vo, table_name, overwrite):
+def update_performance_data(operator_id, performance_data, name, validator_count, address, is_vo, is_private, table_name, overwrite):
     table = dynamodb.Table(table_name)
     date_key = datetime.now().strftime("%Y-%m-%d")
 
@@ -76,6 +76,7 @@ def update_performance_data(operator_id, performance_data, name, validator_count
                 'ValidatorCount': validator_count,
                 'Address': address,
                 'isVO': Decimal(is_vo),
+                'isPrivate': bool(is_private, False),
                 'Performance24h': {date_key: format_decimal(performance_data['24h'])},
                 'Performance30d': {date_key: format_decimal(performance_data['30d'])}
             }
@@ -94,7 +95,8 @@ def update_performance_data(operator_id, performance_data, name, validator_count
             'SET #n = :name',
             '#vc = :vc',
             '#addr = :address',
-            '#vo = :isvo'
+            '#vo = :isvo',
+            '#private = :isprivate'
         ]
 
         expression_attribute_names = {
@@ -102,14 +104,16 @@ def update_performance_data(operator_id, performance_data, name, validator_count
             "#n": "Name",
             "#vc": "ValidatorCount",
             "#addr": "Address",
-            "#vo": "isVO"
+            "#vo": "isVO",
+            "#private": "isPrivate"
         }
 
         expression_attribute_values = {
             ":name": name,
             ":vc": validator_count,
             ":address": address,
-            ":isvo": is_vo,
+            ":isvo": Decimal(is_vo),
+            ":private": bool(is_private, False)
         }
 
         # Update the performance maps and set the values
@@ -161,6 +165,7 @@ def lambda_handler(event, context):
             operator.get("validators_count", 0),
             operator.get("owner_address", ''),
             1 if operator.get("type", '') == "verified_operator" else 0,
+            bool(operator.get("is_private", False)),
             table_name,
             overwrite
         )
