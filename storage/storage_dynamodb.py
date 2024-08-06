@@ -56,6 +56,7 @@ class DynamoDBStorage(DataStorageInterface):
                         FIELD_OPERATOR_ID: int(item[FIELD_OPERATOR_ID]),
                         FIELD_OPERATOR_NAME: item[FIELD_OPERATOR_NAME],
                         FIELD_IS_VO: bool(item.get(FIELD_IS_VO, False)),
+                        FIELD_IS_PRIVATE: bool(item.get(FIELD_IS_PRIVATE, False)),
                         FIELD_VALIDATOR_COUNT: validator_count,
                         FIELD_ADDRESS: item.get(FIELD_ADDRESS),
                         FIELD_PERF_DATA_24H: data_points_24h,
