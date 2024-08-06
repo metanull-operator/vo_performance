@@ -15,7 +15,7 @@ def operator_threshold_alert_24h(operator, threshold):
         data_point = operator[FIELD_PERF_DATA_24H][most_recent_date]
 
         try:
-            if data_point:
+            if data_point is not None:
                 data_point = float(data_point)
             else:
                 return None
@@ -50,7 +50,7 @@ def operator_threshold_alert_30d(operator, threshold):
         data_point = operator[FIELD_PERF_DATA_30D][most_recent_date]
 
         try:
-            if data_point:
+            if data_point is not None:
                 data_point = float(data_point)
             else:
                 return None

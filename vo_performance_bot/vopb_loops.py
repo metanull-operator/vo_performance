@@ -82,10 +82,8 @@ class LoopTasks:
             sub_storage = StorageFactory.get_storage('subscription')
             subscriptions = sub_storage.get_subscriptions_by_type('alerts')
 
-            display_mentions = True
             if not subscriptions:
                 logging.warning("Subscription data unavailable.")
-                display_mentions = False
 
             await send_vo_threshold_messages(self.channel, perf_data, extra_message=self.extra_message,
                                              subscriptions=subscriptions)
