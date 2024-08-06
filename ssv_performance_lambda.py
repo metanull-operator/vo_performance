@@ -64,10 +64,21 @@ def update_performance_data(operator_id, performance_data, name, validator_count
     def format_decimal(value):
         return Decimal(value).quantize(Decimal('.000001'), rounding=ROUND_HALF_UP)
 
+    # Fetch the existing item from DynamoDB to check its structure and existence
     existing_item_response = table.get_item(Key={'OperatorID': operator_id})
     item_exists = 'Item' in existing_item_response
 
-    if not item_exists:
+    # Define 'item' only if it exists in the response
+    if item_exists:
+        item = existing_item_response['Item']
+
+        # Initialize performance attributes if they do not exist or are not in the correct format
+        if 'Performance24h' not in item or not isinstance(item['Performance24h'], dict):
+            ensure_performance_attribute(table, operator_id, 'Performance24h')
+        if 'Performance30d' not in item or not isinstance(item['Performance30d'], dict):
+            ensure_performance_attribute(table, operator_id, 'Performance30d')
+
+    else:
         # Initialize the performance maps if not existing
         table.put_item(
             Item={
@@ -81,69 +92,68 @@ def update_performance_data(operator_id, performance_data, name, validator_count
                 'Performance30d': {date_key: format_decimal(performance_data['30d'])}
             }
         )
+        return
+
+    # Update expressions for DynamoDB update operation
+    update_expression = [
+        'SET #n = :name',
+        '#vc = :vc',
+        '#addr = :address',
+        '#vo = :isvo',
+        '#private = :isprivate'
+    ]
+
+    expression_attribute_names = {
+        "#dk": date_key,
+        "#n": "Name",
+        "#vc": "ValidatorCount",
+        "#addr": "Address",
+        "#vo": "isVO",
+        "#private": "isPrivate"
+    }
+
+    expression_attribute_values = {
+        ":name": name,
+        ":vc": validator_count,
+        ":address": address,
+        ":isvo": Decimal(is_vo),
+        ":isprivate": is_private,  # Ensure this matches your usage in the UpdateExpression
+        ":p24h": format_decimal(performance_data['24h']),
+        ":p30d": format_decimal(performance_data['30d'])
+    }
+
+    # Update the performance maps based on the overwrite flag
+    if overwrite:
+        update_expression.extend([
+            'Performance24h.#dk = :p24h',
+            'Performance30d.#dk = :p30d'
+        ])
     else:
-        # If we don't see the performance attribute as a dict/map in the
-        # record we just retrieved, then make the call to initialize it.
-        # This should be a rare case, because this code correctly initializes, but
-        # legacy code may not.
-        if 'Performance24h' not in item or not isinstance(item['Performance24h'], dict):
-            ensure_performance_attribute(table_name, operator_id, 'Performance24h')
-        if 'Performance30d' not in item or not isinstance(item['Performance30d'], dict):
-            ensure_performance_attribute(table_name, operator_id, 'Performance30d')
+        update_expression.extend([
+            'Performance24h.#dk = if_not_exists(Performance24h.#dk, :p24h)',
+            'Performance30d.#dk = if_not_exists(Performance30d.#dk, :p30d)'
+        ])
 
-        update_expression = [
-            'SET #n = :name',
-            '#vc = :vc',
-            '#addr = :address',
-            '#vo = :isvo',
-            '#private = :isprivate'
-        ]
+    # Converting list to string for update expression
+    update_expression_str = ', '.join(update_expression)
 
-        expression_attribute_names = {
-            "#dk": date_key
-            "#n": "Name",
-            "#vc": "ValidatorCount",
-            "#addr": "Address",
-            "#vo": "isVO",
-            "#private": "isPrivate"
-        }
-
-        expression_attribute_values = {
-            ":name": name,
-            ":vc": validator_count,
-            ":address": address,
-            ":isvo": Decimal(is_vo),
-            ":private": bool(is_private, False)
-        }
-
-        # Update the performance maps and set the values
-        if overwrite:
-            # If overwriting, set the performance data directly
-            update_expression.append('Performance24h.#dk = :p24h')
-            update_expression.append('Performance30d.#dk = :p30d')
-        else:
-            # If not overwriting, initialize the map and set the value if it doesn't exist
-            update_expression.append('Performance24h.#dk = if_not_exists(Performance24h.#dk, :p24h)')
-            update_expression.append('Performance30d.#dk = if_not_exists(Performance30d.#dk, :p30d)')
-
-        update_expression_str = ', '.join(update_expression)
-
-        try:
-            response = table.update_item(
-                Key={'OperatorID': operator_id},
-                UpdateExpression=update_expression_str,
-                ExpressionAttributeNames=expression_attribute_names,
-                ExpressionAttributeValues=expression_attribute_values,
-                ReturnValues="UPDATED_NEW"
-            )
-            return response
-        except Exception as e:
-            print(f"Error updating item: {str(e)}")
+    try:
+        response = table.update_item(
+            Key={'OperatorID': operator_id},
+            UpdateExpression=update_expression_str,
+            ExpressionAttributeNames=expression_attribute_names,
+            ExpressionAttributeValues=expression_attribute_values,
+            ReturnValues="UPDATED_NEW"
+        )
+        return response
+    except Exception as e:
+        print(f"Error updating item: {str(e)}")
+        raise
 
 def lambda_handler(event, context):
     time_periods = event.get('time_periods', ['24h', '30d'])
     network = event.get('network', 'mainnet')
-    table_name = event['table']
+    table_name = 'SSVPerformanceDataDev' 
     page_size = event.get('page_size', 100)
     utc = event.get('utc', False)
     overwrite = event.get('overwrite', False)
