@@ -15,11 +15,20 @@ def create_spreadsheet_data(data, performance_data_attribute):
     dates = sorted({date for details in data.values() for date in details[performance_data_attribute]}, reverse=True)
     sorted_entries = sorted(data.items(), key=lambda item: item[1].get(FIELD_OPERATOR_ID, 'Unknown'))
 
-    spreadsheet_data = [['OperatorID', 'Name', 'isVO', 'ValidatorCount', 'Address'] + dates]
+    spreadsheet_data = [['OperatorID', 'Name', 'isVO', 'isPrivate', 'ValidatorCount', 'Address'] + dates]
 
     for id, details in sorted_entries:
-        row = [id, details.get(FIELD_OPERATOR_NAME, None), 1 if details.get(FIELD_IS_VO, 0) else 0,
-               details.get(FIELD_VALIDATOR_COUNT, None), details.get(FIELD_ADDRESS, None)]
+        is_private = details.get(FIELD_IS_PRIVATE, False)
+        logging.info(f"OperatorID: {id}, isPrivate: {is_private}")  # Log the is_private value
+
+        row = [
+            id,
+            details.get(FIELD_OPERATOR_NAME, None),
+            1 if details.get(FIELD_IS_VO, 0) else 0,
+            1 if is_private else 0,
+            details.get(FIELD_VALIDATOR_COUNT, None),
+            details.get(FIELD_ADDRESS, None)
+        ]
         for date in dates:
             row.append(details[performance_data_attribute].get(date, None))
         spreadsheet_data.append(row)
