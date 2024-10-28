@@ -1,9 +1,16 @@
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import argparse
 import boto3
 from botocore.exceptions import ClientError
 from decimal import Decimal
+import time
+
+DAYS_LIMIT = 7
+REQUESTS_PER_MINUTE = 10
+
+# Set a delay between API requests (in seconds)
+REQUEST_DELAY = 60 / REQUESTS_PER_MINUTE  # Delay in seconds between requests to space them out
 
 def fetch_and_filter_data(base_url, time_period, page_size):
     page = 1
@@ -11,6 +18,7 @@ def fetch_and_filter_data(base_url, time_period, page_size):
 
     while True:
         url = f"{base_url}&page={page}&perPage={page_size}"
+        print(f"Getting page {page} of results")
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
@@ -22,12 +30,14 @@ def fetch_and_filter_data(base_url, time_period, page_size):
             try:
                 if int(op["validators_count"]) > 0:
                     op["performance"][time_period] = Decimal(str(op["performance"][time_period] / 100))
-                    operators[op["id"]] = op
+                operators[op["id"]] = op
             except Exception as e:
                 print(f"Error processing operator {op['id']}: {e}")
                 continue
 
         page += 1
+
+        time.sleep(REQUEST_DELAY)
 
     return operators
 
@@ -52,6 +62,8 @@ def update_dynamodb_performance_data(table_name, operators, target_date, attribu
     table = dynamodb.Table(table_name)
 
     for operator_id, operator in operators.items():
+        print(f"Processing operator {operator_id}")
+
         performance = operator["performance"][time_period]
 
         is_vo = 1 if operator.get("type", "") == "verified_operator" else 0
@@ -62,14 +74,16 @@ def update_dynamodb_performance_data(table_name, operators, target_date, attribu
             'ValidatorCount = :validator_count',
             'isVO = :is_vo',
             'Address = :address',
-            'isPrivate = :is_private'
+            'isPrivate = :is_private',
+            'last_updated = :last_updated'
         ]
         expression_attribute_values = {
             ':name': operator.get("name", ""),
             ':validator_count': operator.get("validators_count", 0),
             ':is_vo': is_vo,
             ':address': operator.get("owner_address", ""),
-            ':is_private': is_private
+            ':is_private': is_private,
+            ':last_updated': target_date
         }
         expression_attribute_names = {
             '#name': 'Name'
@@ -105,11 +119,63 @@ def update_dynamodb_performance_data(table_name, operators, target_date, attribu
                     'isVO': is_vo,
                     'Address': operator.get("owner_address", ""),
                     'isPrivate': is_private,
+                    'last_updated': target_date,
                     attribute_name: {
                         target_date: performance
                     }
                 }
             )
+
+
+def cleanup_outdated_records(table_name):
+    dynamodb = boto3.resource('dynamodb')
+    table = dynamodb.Table(table_name)
+
+    # Define the cutoff date
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=DAYS_LIMIT)
+    cutoff_date_str = cutoff_date.strftime('%Y-%m-%d')
+
+    print(f"Cutoff date: {cutoff_date_str}")
+
+    try:
+        outdated_items = []
+
+        # Scan the table to get all items where last_updated exists and is older than the cutoff date
+        response = table.scan(
+            FilterExpression='last_updated < :cutoff_date',
+            ExpressionAttributeValues={':cutoff_date': cutoff_date_str}
+        )
+
+        outdated_items.extend(response.get('Items', []))
+
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(
+                FilterExpression='last_updated < :cutoff_date',
+                ExpressionAttributeValues={':cutoff_date': cutoff_date_str},
+                ExclusiveStartKey=response['LastEvaluatedKey']  # Pagination key
+            )
+            outdated_items.extend(response['Items'])
+
+        print(f"Found {len(outdated_items)} outdated items")  # Debugging: Log the number of items found
+
+        for item in outdated_items:
+            operator_id = item['OperatorID']
+            print(f"Updating operator {operator_id} - last_updated = {item['last_updated']}")
+
+            # Update ValidatorCount to 0 and set last_updated to the current date
+            table.update_item(
+                Key={'OperatorID': operator_id},
+                UpdateExpression='SET ValidatorCount = :zero, last_updated = :last_updated',
+                ExpressionAttributeValues={
+                    ':zero': 0,
+                    ':last_updated': datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                }
+            )
+
+    except ClientError as e:
+        print(f"Failed to scan table and update outdated records: {e}")
+
+
 
 
 def main():
@@ -141,6 +207,8 @@ def main():
         target_date = datetime.now().strftime("%Y-%m-%d")
 
     update_dynamodb_performance_data(args.table, operators, target_date, args.attribute, args.time_period, args.overwrite)
+
+    cleanup_outdated_records(args.table)
 
 
 if __name__ == "__main__":
