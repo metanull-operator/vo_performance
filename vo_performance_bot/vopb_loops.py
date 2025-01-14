@@ -21,22 +21,26 @@ class LoopTasks:
         now = datetime.now()
         target = datetime.combine(now.date(), self.notification_time).replace(second=0, microsecond=0)
 
-        # Determine whether we are sending alerts now, today, or tomorrow
-        # Set alert_time flag to current time for sending alerts now. Typically for testing.
-        delay = 0
-        if now >= target:
-            if now >= target + timedelta(minutes=1):
-                target += timedelta(days=1)
-                delay = (target - now).total_seconds()
-        else:
-            delay = (target - now).total_seconds()
+        if self.daily_notification_task.is_running():
+            logging.warning("daily_notification_task is already running. Skipping start.")
+        if self.performance_status_all_loop.is_running():
+            logging.warning("performance_status_all_loop is already running. Skipping start.")
 
-        # Wait until the next run should occur...
+        if self.daily_notification_task.is_running() and self.performance_status_all_loop.is_running():
+            logging.warning("All expected tasks running. Skipping start delay and task starts.")
+            return
+
+        if now >= target + timedelta(minutes=1):
+            target += timedelta(days=1)
+
+        delay = (target - now).total_seconds()
+        logging.info(f"Delaying for {delay} seconds until first loop run at {target}...")
         await asyncio.sleep(delay)
 
-        # ...then kick off loops.
-        self.daily_notification_task.start()
-        self.performance_status_all_loop.start()
+        if not self.daily_notification_task.is_running():
+            self.daily_notification_task.start()
+        if not self.performance_status_all_loop.is_running():
+            self.performance_status_all_loop.start()
 
 
     @tasks.loop(hours=24)
