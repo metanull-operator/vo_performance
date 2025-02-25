@@ -14,11 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Set default environment variables
-#ENV PORT=1276
-
-# Expose the port defined in the environment variable
-#EXPOSE ${PORT}
+ENV AWS_CONFIG_FILE=/aws-config.ini
 
 # Run the Flask app using environment variables for configuration
-ENTRYPOINT ["python", "vo-performance-bot.py"]
-python -u vo-performance-bot.py -d $DISCORD_AUTH_TOKEN -c $DISCORD_CHANNEL_ID -p $PERFORMANCE_DATA_TABLE -s $SUBSCRIPTIONS_DATA_TABLE -l $ALLOWED_DM_RECIPIENTS -t $DAILY_MESSAGE_TIME
+ENTRYPOINT ["python", "vo-performance-bot.py", "-d", "/discord-token.txt"]
